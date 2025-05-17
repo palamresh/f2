@@ -80,6 +80,118 @@ class _HomeScreen1State extends State<HomeScreen1> {
     );
   }
 
+  void showEditEntryDialog(Map entry) {
+    TextEditingController quantityController =
+        TextEditingController(text: entry['quantity'].toString());
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Edit Quantity for ${entry['foodName']}"),
+        content: TextField(
+          controller: quantityController,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(hintText: "e.g. 150"),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              int newQty = int.tryParse(quantityController.text) ?? 0;
+              double per100g = 0;
+
+              // Fetch original food calories per 100g
+              final foodsSnap = await db.child('foods').get();
+              if (foodsSnap.exists) {
+                Map<String, dynamic> foods =
+                    Map<String, dynamic>.from(foodsSnap.value as dynamic);
+                foods.forEach((key, value) {
+                  if (value['name'] == entry['foodName']) {
+                    per100g =
+                        double.tryParse(value['caloriesPer100g'].toString()) ??
+                            0;
+                  }
+                });
+              }
+
+              double newTotalCalories = (newQty * per100g) / 100;
+
+              // 🔄 Update in Firebase using date + key
+              final date = entry['date'];
+              final snapshot = await db.child('food_entries/$date').get();
+
+              if (snapshot.exists) {
+                final map =
+                    Map<String, dynamic>.from(snapshot.value as dynamic);
+                map.forEach((key, value) async {
+                  if (value['foodName'] == entry['foodName'] &&
+                      value['quantity'].toString() ==
+                          entry['quantity'].toString() &&
+                      value['totalCalories'].toString() ==
+                          entry['totalCalories'].toString()) {
+                    await db.child('food_entries/$date/$key').update({
+                      'quantity': newQty,
+                      'totalCalories': newTotalCalories,
+                    });
+                  }
+                });
+              }
+
+              Navigator.pop(context);
+              fetchEntriesByDateRange();
+              calculateTodayCalories();
+            },
+            child: Text("Update"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void showEditDialog(Map food, String key) {
+    final nameController = TextEditingController(text: food['name']);
+    final caloriesController =
+        TextEditingController(text: food['caloriesPer100g'].toString());
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Edit Food"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: InputDecoration(labelText: "Name"),
+            ),
+            TextField(
+              controller: caloriesController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(labelText: "Calories per 100g"),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              String name = nameController.text.trim();
+              double calories =
+                  double.tryParse(caloriesController.text.trim()) ?? 0;
+
+              await db.child('foods').child(key).update({
+                'name': name,
+                'caloriesPer100g': calories,
+              });
+
+              Navigator.pop(context);
+              setState(() {});
+            },
+            child: Text("Save"),
+          )
+        ],
+      ),
+    );
+  }
+
   Future<void> pickDate({required bool isFrom}) async {
     DateTime? picked = await showDatePicker(
       context: context,
@@ -134,15 +246,14 @@ class _HomeScreen1State extends State<HomeScreen1> {
     return Scaffold(
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          Navigator.push(context,
-              MaterialPageRoute(builder: (context) => AddFoodScreen1()));
+          Navigator.push(
+              context, MaterialPageRoute(builder: (_) => AddFoodScreen1()));
         },
         child: Icon(Icons.add),
       ),
       appBar: AppBar(title: Text("Calorie Calculator")),
       body: Column(
         children: [
-          // 🔹 Load Food List
           Expanded(
             child: FutureBuilder<DataSnapshot>(
               future: db.child('foods').get(),
@@ -154,23 +265,33 @@ class _HomeScreen1State extends State<HomeScreen1> {
                     Map<String, dynamic>.from(snapshot.data!.value as dynamic);
 
                 return ListView(
-                  children: foods.values.map((food) {
+                  children: foods.entries.map((entry) {
+                    final key = entry.key;
+                    final food = entry.value;
                     return ListTile(
                       title: Text(food['name']),
                       subtitle:
                           Text("Per 100g: ${food['caloriesPer100g']} kcal"),
-                      trailing: Icon(Icons.add),
-                      onTap: () => showQuantityDialog(food),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.edit),
+                            onPressed: () => showEditDialog(food, key),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.add),
+                            onPressed: () => showQuantityDialog(food),
+                          ),
+                        ],
+                      ),
                     );
                   }).toList(),
                 );
               },
             ),
           ),
-
           Divider(),
-
-          // 🔸 Filter By Date Range
           Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
@@ -195,8 +316,6 @@ class _HomeScreen1State extends State<HomeScreen1> {
               ],
             ),
           ),
-
-          // 🔸 Filtered Entries
           if (filteredEntries.isNotEmpty)
             Expanded(
               child: ListView.builder(
@@ -207,13 +326,23 @@ class _HomeScreen1State extends State<HomeScreen1> {
                     title: Text(entry['foodName']),
                     subtitle: Text(
                         "${entry['quantity']}g - ${entry['totalCalories']} kcal"),
-                    trailing: Text(entry['date']),
+                    // trailing: Text(entry['date']),
+
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                            onPressed: () {
+                              showEditEntryDialog(entry);
+                            },
+                            icon: Icon(Icons.edit)),
+                        Text(entry['date']),
+                      ],
+                    ),
                   );
                 },
               ),
             ),
-
-          // 🔹 Summary
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Column(
